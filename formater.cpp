@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <cmath>
 
 #define BYTES_PER_SECTOR 512
 
@@ -15,24 +16,43 @@ typedef struct bootRecord
     unsigned long int SizeOfBitMAp;
     unsigned long int INODES;
     unsigned short int LenOfInode;
+    unsigned long int PosData;
 } __attribute__((packed)) bootRecord;
 
-bootRecord define_br(unsigned long int size_of_img, unsigned char sector_per_cluster)
+bootRecord define_br(unsigned long int size_of_img, unsigned int sector_per_cluster)
 {
-    bootRecord BR;
-    BR.BytesPerSector = BYTES_PER_SECTOR;
-    BR.SectorsPerCluster = sector_per_cluster;
-    BR.LenOfInode = 32; // len(In0de)
-    BR.TotalOfSectors = size_of_img;
-    BR.ReservedSectors = 1;
+    bootRecord br;
+    br.BytesPerSector = BYTES_PER_SECTOR;
+    br.SectorsPerCluster = sector_per_cluster;
+    br.LenOfInode = 32; // len(In0de)
+    br.TotalOfSectors = size_of_img;
+    br.ReservedSectors = 1;
+
 
     size_of_img--;
 
-    int total_agrupamentos = BR.TotalOfSectors / (BR.LenOfInode + (BR.BytesPerSector * BR.SectorsPerCluster) + 1);
-    BR.SizeOfBitMAp = total_agrupamentos;
-    BR.INODES = total_agrupamentos * BR.LenOfInode * (BYTES_PER_SECTOR / BR.LenOfInode);
+    float total_agrupamentos = (br.TotalOfSectors / (0.0 + br.LenOfInode + (br.BytesPerSector * br.SectorsPerCluster) + 1));
+    br.SizeOfBitMAp = int(total_agrupamentos);
+    br.INODES = int(total_agrupamentos) * br.LenOfInode * (BYTES_PER_SECTOR / br.LenOfInode);
 
-    return BR;
+    int v_execente = size_of_img - int(total_agrupamentos) * (br.LenOfInode + (br.BytesPerSector * br.SectorsPerCluster) + 1);
+
+    if (v_execente > (1 + 1 + 16 * sector_per_cluster))
+    {
+        br.SizeOfBitMAp++;
+        br.INODES += BYTES_PER_SECTOR / br.LenOfInode;
+        v_execente -= 2;
+        if (v_execente % sector_per_cluster)
+            br.ReservedSectors += v_execente % sector_per_cluster;
+    }
+    else
+    {
+        br.ReservedSectors += v_execente;
+    }
+
+    br.PosData = br.ReservedSectors + br.SizeOfBitMAp + (br.INODES/(br.BytesPerSector/br.LenOfInode));
+
+    return br;
 }
 
 void write_br_to_file(const string &filename, const bootRecord &BR)
@@ -89,13 +109,13 @@ void print_br(const bootRecord &BR)
 int main()
 {
     long int size_of_img = 546;
-    unsigned char sector_per_cluster = 1;
+    unsigned int sector_per_cluster = 1;
     string name_img("teste.img");
 
     std::cout << "Qual o número Setores? ";
     std::cin >> size_of_img;
-    // std::cout << "Qual o número Setores per Cluster? (1) ";
-    // std::cin >> sector_per_cluster;
+    std::cout << "Qual o número Setores per Cluster? (1) ";
+    std::cin >> sector_per_cluster;
     // std::cout << " Nome da imagem: ";
     // cin >> name_img;
 

@@ -24,20 +24,32 @@ bootRecord define_br(unsigned long int size_of_img, unsigned int sector_per_clus
     bootRecord br;
     br.BytesPerSector = BYTES_PER_SECTOR;
     br.SectorsPerCluster = sector_per_cluster;
-    br.LenOfInode = 32; // len(In0de)
+    br.LenOfInode = 64; // len(In0de)
     br.TotalOfSectors = size_of_img;
     br.ReservedSectors = 1;
 
 
     size_of_img--;
 
-    float total_agrupamentos = (br.TotalOfSectors / (0.0 + br.LenOfInode + (br.BytesPerSector * br.SectorsPerCluster) + 1));
+    /* 
+        4096 total de bit em um setor de 512 bytes
+
+        4096 * len(inode) / 512
+
+
+    
+    
+     */
+
+    float total_agrupamentos = (br.TotalOfSectors / ( br.LenOfInode * 8 + (br.BytesPerSector * 8 * br.SectorsPerCluster) + 1));
     br.SizeOfBitMAp = int(total_agrupamentos);
-    br.INODES = int(total_agrupamentos) * br.LenOfInode * (BYTES_PER_SECTOR / br.LenOfInode);
+    br.INODES = int(total_agrupamentos) * BYTES_PER_SECTOR * 8 ;
 
-    int v_execente = size_of_img - int(total_agrupamentos) * (br.LenOfInode + (br.BytesPerSector * br.SectorsPerCluster) + 1);
 
-    if (v_execente > (1 + 1 + 16 * sector_per_cluster))
+
+    int v_execente = size_of_img - int(total_agrupamentos) * (br.LenOfInode * 8 + (br.BytesPerSector * 8 * br.SectorsPerCluster) + 1);
+
+    if (v_execente >= (1 + 1 + 8 * sector_per_cluster))
     {
         br.SizeOfBitMAp++;
         br.INODES += BYTES_PER_SECTOR / br.LenOfInode;
@@ -46,14 +58,17 @@ bootRecord define_br(unsigned long int size_of_img, unsigned int sector_per_clus
             br.ReservedSectors += v_execente % sector_per_cluster;
     }
     else
-    {
         br.ReservedSectors += v_execente;
-    }
 
     br.PosData = br.ReservedSectors + br.SizeOfBitMAp + (br.INODES/(br.BytesPerSector/br.LenOfInode));
 
     return br;
 }
+
+
+
+
+
 
 void write_br_to_file(const string &filename, const bootRecord &BR)
 {
@@ -73,6 +88,9 @@ void write_br_to_file(const string &filename, const bootRecord &BR)
     // Fechar o arquivo
     file.close();
 }
+
+
+
 
 bootRecord read_br_from_file(const string &filename)
 {
@@ -108,6 +126,12 @@ void print_br(const bootRecord &BR)
 
 int main()
 {
+    /* 
+    TO - DO:
+        -- bitmap clusters fantasmas 
+        -- criar o Inode do root dir
+     */
+
     long int size_of_img = 546;
     unsigned int sector_per_cluster = 1;
     string name_img("teste.img");

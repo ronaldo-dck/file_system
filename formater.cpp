@@ -2,6 +2,7 @@
 #include <fstream>
 #include <string>
 #include <cmath>
+#include <cstdint>
 
 #define BYTES_PER_SECTOR 512
 

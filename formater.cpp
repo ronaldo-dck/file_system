@@ -12,7 +12,7 @@ typedef struct bootRecord
 {
     unsigned short int BytesPerSector;
     char SectorsPerCluster;
-    unsigned short int ReservedSectors;
+    char ReservedSectors;
     unsigned long int TotalOfSectors;
     unsigned long int SizeOfBitMap;
     unsigned long int Inodes;
@@ -163,7 +163,7 @@ void print_br(const bootRecord &BR)
 {
     cout << "BytesPerSector: " << BR.BytesPerSector << endl;
     cout << "SectorsPerCluster: " << static_cast<int>(BR.SectorsPerCluster) << endl;
-    cout << "ReservedSectors: " << BR.ReservedSectors << endl;
+    cout << "ReservedSectors: " << (int)BR.ReservedSectors << endl;
     cout << "TotalOfSectors: " << BR.TotalOfSectors << endl;
     cout << "SizeOfBitMap: " << BR.SizeOfBitMap << endl;
     cout << "Inodes: " << BR.Inodes << endl;

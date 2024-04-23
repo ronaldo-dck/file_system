@@ -5,6 +5,8 @@
 #include <bitset>
 #include <math.h>
 #include <ctime>
+#include <string>
+#include <stdio.h>
 
 // Estruturas
 
@@ -30,6 +32,14 @@ typedef struct Inode
     unsigned short int cluster_ptrs[8];
     unsigned short int undirect_cluster_ptr;
 } __attribute__((packed)) Inode;
+
+typedef struct RootEntry
+{
+    char type;
+    unsigned long int inode_id;
+    char name[20];
+    char extension[3];
+} __attribute__((packed)) RootEntry;
 
 // Constantes
 
@@ -66,16 +76,22 @@ std::vector<unsigned short> find_clusters(int clusters_needed)
     std::vector<unsigned short> free_clusters;
     int bitmap_pos = boot_record.reserved_sectors * boot_record.bytes_per_sector;
     image_file.seekg(bitmap_pos, std::ios::beg);
-    for (int i = 0; i < boot_record.bitmap_size && free_clusters.size() < clusters_needed; i++)
+    int bitmap_bytes = boot_record.bitmap_size * boot_record.bytes_per_sector;
+    for (int i = 0; i < bitmap_bytes && free_clusters.size() < clusters_needed; i++)
     {
         char byte;
         image_file.read(&byte, 1);
         for (int j = 0; j < 8; j++)
         {
             if (!(byte & (1 << j)))
+            {
                 free_clusters.push_back(i * 8 + j);
+                if (free_clusters.size() == clusters_needed)
+                    break;
+            }
         }
     }
+    printf("Free size: %i Clusters needed: %i\n", free_clusters.size(), clusters_needed);
     if (free_clusters.size() < clusters_needed)
     {
         std::cout << "Não há clusters disponíveis o suficiente para armazenar o arquivo.\n";
@@ -109,17 +125,50 @@ void allocate_file(std::vector<unsigned short> free_clusters)
         target_file.close();
         std::exit(1);
     }
+    // Lidar com Root Dir
+    image_file.seekg(inodes_pos, std::ios::beg);
+    Inode root_dir;
+    image_file.read((char *)&root_dir, sizeof(Inode));
+    int root_clusters_needed = std::ceil((float)root_dir.size / ((float)boot_record.sectors_per_cluster * (float)boot_record.bytes_per_sector));
+    int new_root_size = root_dir.size + 32;
+    int new_root_clusters_needed = std::ceil((float)new_root_size / ((float)boot_record.sectors_per_cluster * (float)boot_record.bytes_per_sector));
+    if (new_root_clusters_needed > root_clusters_needed)
+    {
+    }
+    else
+    {
+        if (root_clusters_needed > 8)
+        {
+        }
+        else
+        {
+            int last_dir = root_clusters_needed * boot_record.bytes_per_sector * boot_record.sectors_per_cluster - root_dir.size;
+            int dir_loc = boot_record.pos_data * boot_record.bytes_per_sector + (root_dir.cluster_ptrs[root_clusters_needed] + 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster + last_dir;
+            printf("Loc dir: %i\n", dir_loc);
+            image_file.seekp(dir_loc, std::ios::beg);
+            RootEntry root_entry;
+            root_entry.type = 0x20;
+            root_entry.name[0] = 'o';
+            root_entry.name[1] = 'k';
+            root_entry.extension[0] = 'e';
+            root_entry.extension[1] = 'b';
+            root_entry.extension[2] = 'a';
+            root_entry.inode_id = available_inode;
+            image_file.write((char *)&root_entry, sizeof(RootEntry));
+            root_dir.size += 32;
+        }
+    }
     // Alocar Inode
     target_file.seekg(0, std::ios::end);
-    
+
     inode.type = 0x01;
-    inode.size = target_file.tellg();;
+    inode.size = target_file.tellg();
     inode.modification_time = static_cast<unsigned int>(time(0));
     inode.creation_time = static_cast<unsigned int>(time(0));
     // Alocar Clusters no Bitmap
     for (int i = 0; i < free_clusters.size(); i++)
     {
-        int byte_loc = free_clusters[i] / 8; // Bit 9 = Byte 1 Bit 1
+        int byte_loc = free_clusters[i] / 8;       // Bit 9 = Byte 1 Bit 1
         int bit = free_clusters[i] - byte_loc * 8; // 9 - 1 * 8 = 1
         image_file.seekg(bitmap_pos + byte_loc, std::ios::beg);
         image_file.seekp(bitmap_pos + byte_loc, std::ios::beg);
@@ -133,24 +182,29 @@ void allocate_file(std::vector<unsigned short> free_clusters)
         inode.cluster_ptrs[i] = free_clusters[i];
     // Alocar Ponteiros Indiretos
     if (free_clusters.size() > 8)
-    {   
+    {
         inode.undirect_cluster_ptr = free_clusters[8];
         int pointers_per_cluster = (float)(boot_record.sectors_per_cluster * boot_record.bytes_per_sector) / 4 - 1;
         int clusters_allocated = 8;
-        int data_pos = inodes_pos + boot_record.inodes;
+        int data_pos = boot_record.pos_data * boot_record.bytes_per_sector;
         while (clusters_allocated != free_clusters.size())
         {
-            clusters_allocated++;
-            image_file.seekp(data_pos + free_clusters[clusters_allocated] * boot_record.sectors_per_cluster * boot_record.bytes_per_sector, std::ios::beg);
+            printf("Clusters Allocated: %i\n", clusters_allocated);
+            printf("Indirect cluster at %i\n", data_pos + (free_clusters[clusters_allocated] + 1) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector);
+            image_file.seekp(data_pos + (free_clusters[clusters_allocated] + 1) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector, std::ios::beg);
             for (int i = 0; i < pointers_per_cluster && clusters_allocated != free_clusters.size(); i++)
             {
-                image_file.write(reinterpret_cast<const char*>(free_clusters[clusters_allocated]), 4);    
                 clusters_allocated++;
+                image_file.write(reinterpret_cast<const char *>(&free_clusters[clusters_allocated]), sizeof(unsigned short));
             }
             if (clusters_allocated != free_clusters.size())
-                image_file.write(reinterpret_cast<const char*>(free_clusters[clusters_allocated]), 4);
+            {
+                image_file.write(reinterpret_cast<const char *>(&free_clusters[clusters_allocated]), sizeof(unsigned short));
+                clusters_allocated++;
+            }
         }
     }
+    // Write Inode
     image_file.seekp(inodes_pos + available_inode * sizeof(Inode), std::ios::beg);
     image_file.write((char *)&inode, sizeof(Inode));
 }
@@ -158,7 +212,8 @@ void allocate_file(std::vector<unsigned short> free_clusters)
 int main(int argc, char *argv[])
 {
     // Entradas
-    get_inputs();
+    image_path = argv[1];
+    target_file_path = argv[2];
     // Conseguir Boot Record
     image_file.open(image_path, std::ios::binary | std::ios::in | std::ios::out);
     image_file.read((char *)(&boot_record), sizeof(BootRecord));

@@ -51,7 +51,7 @@ std::fstream target_file;
 BootRecord boot_record;
 
 bool expand_root_dir = false;
-unsigned int root_dir_new_cluster = 0x00;
+unsigned int root_dir_new_cluster = 0x00, root_dir_new_indirect_cluster = 0x00;
 
 int bitmap_position, inodes_position, data_position;
 int target_file_size, pointers_per_cluster;
@@ -112,6 +112,7 @@ std::vector<unsigned int> find_clusters(int clusters_needed)
     if (new_root_dir_clusters_needed > root_dir_clusters_needed)
     {
         expand_root_dir = true;
+        int new_offset;
         for (int k = bitmap_offset + 1; k < bitmap_bytes - bitmap_offset && !found_root_cluster; k++)
         {
             char byte;
@@ -123,6 +124,7 @@ std::vector<unsigned int> find_clusters(int clusters_needed)
                     root_dir_new_cluster = k * 8 + j + 1;
                     found_root_cluster = true;
                     printf("Expand root dir to %i\n", root_dir_new_cluster);
+                    new_offset = k + 1;
                 }
             }
         }
@@ -131,6 +133,30 @@ std::vector<unsigned int> find_clusters(int clusters_needed)
             printf("Não há clusters disponíveis para expandir o root dir.\n");
             printf("Saindo...\n");
             std::exit(1);
+        }
+        else
+        {
+            // Encontrar Clusters Indiretos pra Root Dir se Necessário
+            // It was here I decided hell was more than real and we probably live on it already 😎
+            int old_indirect_needed = std::ceil((float)(root_dir_clusters_needed - 1) / (float)pointers_per_cluster);
+            int new_indirect_needed = std::ceil((float)(new_root_dir_clusters_needed - 1) / (float)pointers_per_cluster);
+            if (new_indirect_needed > old_indirect_needed)
+            {
+                for (int k = new_offset + 1; k < bitmap_bytes - bitmap_offset && !found_root_cluster; k++)
+                {
+                    char byte;
+                    image_file.read(&byte, 1);
+                    for (int j = 0; j < 8 && !found_root_cluster; j++)
+                    {
+                        if (!(byte & (128 >> (uint)j)))
+                        {
+                            root_dir_new_indirect_cluster = k * 8 + j + 1;
+                            found_root_cluster = true;
+                            printf("Expand indirect root dir cluster to %i\n", root_dir_new_indirect_cluster);
+                        }
+                    }
+                }
+            }
         }
     }
     return free_clusters;
@@ -165,7 +191,7 @@ RootEntry create_root_entry(int allocated_inode)
             name_loc = i;
     }
     for (int j = name_loc + 1; j < target_file_path.length() && target_file_path[j] != '.'; j++)
-        root_entry.name[j - (name_loc) - 1] = target_file_path[j];
+        root_entry.name[j - (name_loc)-1] = target_file_path[j];
     for (int j = name_loc + 1; j < target_file_path.length(); j++)
     {
         if (target_file_path[j] == '.')
@@ -193,6 +219,10 @@ void allocate_root_entry(int allocated_inode)
         image_file.write((char *)&root_entry, sizeof(RootEntry));
         if (root_dir_clusters < 9)
             new_root_dir.cluster_ptrs[root_dir_clusters - 1] = root_dir_new_cluster;
+        else if (root_dir_clusters == 9)
+        {
+            new_root_dir.undirect_cluster_ptr = root_dir_new_cluster;
+        }
         else
         {
             printf("The undirect expand\n");

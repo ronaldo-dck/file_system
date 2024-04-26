@@ -16,7 +16,7 @@ typedef struct bootRecord
     unsigned long int TotalOfSectors;
     unsigned long int SizeOfBitMap;
     unsigned long int Inodes;
-    unsigned short int LenOfInode;
+    unsigned int LenOfInode;
     unsigned long int PosData;
 } __attribute__((packed)) bootRecord;
 

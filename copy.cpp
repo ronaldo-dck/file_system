@@ -75,20 +75,25 @@ std::vector<unsigned int> find_clusters(int clusters_needed)
     std::vector<unsigned int> free_clusters;
     image_file.seekg(bitmap_position, std::ios::beg);
     int bitmap_bytes = boot_record.bitmap_size * boot_record.bytes_per_sector;
-    int bitmap_offset;
-    for (bitmap_offset = 0; bitmap_offset < bitmap_bytes && free_clusters.size() < clusters_needed; bitmap_offset++)
+    int bitmap_offset = 0, bit_offset = 0;
+    for (; bitmap_offset < bitmap_bytes && free_clusters.size() < clusters_needed; bitmap_offset++)
     {
         char byte;
         image_file.read(&byte, 1);
-        for (int j = 0; j < 8; j++)
+        for (; bit_offset < 8; bit_offset++)
         {
-            if (!(byte & (128 >> (uint)j)))
+            if (!(byte & (128 >> (uint)bit_offset)))
             {
-                free_clusters.push_back(bitmap_offset * 8 + j + 1);
+                free_clusters.push_back(bitmap_offset * 8 + bit_offset + 1);
                 if (free_clusters.size() == clusters_needed)
+                {
+                    bit_offset++;
                     break;
+                }
             }
         }
+        if (free_clusters.size() < clusters_needed)
+            bit_offset = 0;
     }
     // Verificar Falta
     if (free_clusters.size() < clusters_needed)
@@ -107,26 +112,25 @@ std::vector<unsigned int> find_clusters(int clusters_needed)
     root_dir_clusters_needed = std::max(1, root_dir_clusters_needed);
     int new_root_dir_clusters_needed = std::ceil((float)new_root_dir_size / ((float)boot_record.bytes_per_sector * boot_record.sectors_per_cluster));
     bool found_root_cluster = false;
-    image_file.seekg(bitmap_position + bitmap_offset, std::ios::beg);
+    image_file.seekg(bitmap_position + --bitmap_offset, std::ios::beg);
     // Encontrar Cluster para Root Dir Se Necessário
     if (new_root_dir_clusters_needed > root_dir_clusters_needed)
     {
         expand_root_dir = true;
-        int new_offset;
-        for (int k = bitmap_offset + 1; k < bitmap_bytes - bitmap_offset && !found_root_cluster; k++)
+        for (; bitmap_offset < bitmap_bytes && !found_root_cluster; bitmap_offset++)
         {
             char byte;
             image_file.read(&byte, 1);
-            for (int j = 0; j < 8 && !found_root_cluster; j++)
+            for (; bit_offset < 8 && !found_root_cluster; bit_offset++)
             {
-                if (!(byte & (128 >> (uint)j)))
+                if (!(byte & (128 >> (uint)bit_offset)))
                 {
-                    root_dir_new_cluster = k * 8 + j + 1;
+                    root_dir_new_cluster = bitmap_offset * 8 + bit_offset + 1;
                     found_root_cluster = true;
-                    printf("Expand root dir to %i\n", root_dir_new_cluster);
-                    new_offset = k + 1;
                 }
             }
+            if (!found_root_cluster)
+                bit_offset = 0;
         }
         if (!root_dir_new_cluster)
         {
@@ -138,23 +142,31 @@ std::vector<unsigned int> find_clusters(int clusters_needed)
         {
             // Encontrar Clusters Indiretos pra Root Dir se Necessário
             // It was here I decided hell was more than real and we probably live on it already 😎
-            int old_indirect_needed = std::ceil((float)(root_dir_clusters_needed - 1) / (float)pointers_per_cluster);
-            int new_indirect_needed = std::ceil((float)(new_root_dir_clusters_needed - 1) / (float)pointers_per_cluster);
+            int old_indirect_needed = std::ceil((float)(root_dir_clusters_needed - 8) / (float)pointers_per_cluster);
+            int new_indirect_needed = std::ceil((float)(new_root_dir_clusters_needed - 8) / (float)pointers_per_cluster);
+            found_root_cluster = false;
+            image_file.seekg(bitmap_position + --bitmap_offset, std::ios::beg);
             if (new_indirect_needed > old_indirect_needed)
             {
-                for (int k = new_offset + 1; k < bitmap_bytes - bitmap_offset && !found_root_cluster; k++)
+                for (; bitmap_offset < bitmap_bytes && !found_root_cluster; bitmap_offset++)
                 {
                     char byte;
                     image_file.read(&byte, 1);
-                    for (int j = 0; j < 8 && !found_root_cluster; j++)
+                    for (; bit_offset < 8 && !found_root_cluster; bit_offset++)
                     {
-                        if (!(byte & (128 >> (uint)j)))
+                        if (!(byte & (128 >> (uint)bit_offset)))
                         {
-                            root_dir_new_indirect_cluster = k * 8 + j + 1;
+                            root_dir_new_indirect_cluster = bitmap_offset * 8 + bit_offset + 1;
                             found_root_cluster = true;
-                            printf("Expand indirect root dir cluster to %i\n", root_dir_new_indirect_cluster);
                         }
                     }
+                    bit_offset = 0;
+                }
+                if (!root_dir_new_indirect_cluster)
+                {
+                    printf("Não há clusters disponíveis para expandir o root dir.\n");
+                    printf("Saindo...\n");
+                    std::exit(1);
                 }
             }
         }
@@ -170,7 +182,10 @@ int verify_inode_availability()
     {
         image_file.read((char *)&temp_inode, sizeof(Inode));
         if (temp_inode.type == 0x00)
+        {
+            printf("Inode alocado para o arquivo: %i\n", i);
             return i;
+        }
     }
     return -1;
 }
@@ -207,126 +222,104 @@ void allocate_root_entry(int allocated_inode)
 {
     image_file.seekg(inodes_position, std::ios::beg);
     Inode new_root_dir = root_dir_inode;
+    printf("Root dir first pointer: %i New %i\n", root_dir_inode.cluster_ptrs[0], new_root_dir.cluster_ptrs[0]);
     new_root_dir.size += 32;
     RootEntry root_entry = create_root_entry(allocated_inode);
     int root_dir_clusters = std::ceil((float)new_root_dir.size / ((float)boot_record.bytes_per_sector * boot_record.sectors_per_cluster));
-    printf("New root size: %i\n", new_root_dir.size);
-    printf("Root dir clusters: %i\n", root_dir_clusters);
+    int entries_per_cluster = (boot_record.bytes_per_sector * boot_record.sectors_per_cluster) / sizeof(RootEntry);
     if (expand_root_dir)
     {
         int entry_loc = boot_record.pos_data * boot_record.bytes_per_sector + (root_dir_new_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
         image_file.seekp(entry_loc, std::ios::beg);
         image_file.write((char *)&root_entry, sizeof(RootEntry));
         if (root_dir_clusters < 9)
+        {
             new_root_dir.cluster_ptrs[root_dir_clusters - 1] = root_dir_new_cluster;
+        }
         else if (root_dir_clusters == 9)
         {
-            new_root_dir.undirect_cluster_ptr = root_dir_new_cluster;
+            new_root_dir.undirect_cluster_ptr = root_dir_new_indirect_cluster;
+            image_file.seekp(data_position + (root_dir_new_indirect_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster, std::ios::beg);
+            image_file.write((char *)&root_dir_new_cluster, 4);
         }
         else
         {
-            printf("The undirect expand\n");
             int current_indirect_cluster = new_root_dir.undirect_cluster_ptr;
             int current_cluster = 7;
-            int ind_cluster_loc = boot_record.pos_data * boot_record.bytes_per_sector + (current_indirect_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
-            image_file.seekg(ind_cluster_loc, std::ios::beg);
-            while (current_cluster != root_dir_clusters - 1)
+            bool allocated = false;
+            while (!allocated)
             {
-                current_cluster++;
-                if ((current_cluster - 8) % pointers_per_cluster == 0)
+                int cluster;
+                int ind_cluster_loc = boot_record.pos_data * boot_record.bytes_per_sector + (current_indirect_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
+                image_file.seekg(ind_cluster_loc, std::ios::beg);
+                for (int i = 0; i < pointers_per_cluster && !allocated; i++)
                 {
-                    image_file.seekg(ind_cluster_loc + pointers_per_cluster * 4, std::ios::beg);
-                    image_file.read((char *)&current_indirect_cluster, 4);
-                    ind_cluster_loc = boot_record.pos_data * boot_record.bytes_per_sector + (current_indirect_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
+                    image_file.read((char *)&cluster, 4);
+                    if (cluster == 0x00)
+                    {
+                        image_file.seekp(ind_cluster_loc + i * 4, std::ios::beg);
+                        image_file.write((char *)&root_dir_new_cluster, 4);
+                        current_cluster++;
+                        allocated = true;
+                    }
                 }
+                image_file.read((char *)&current_indirect_cluster, 4);
             }
-            int ind_count = (current_cluster - 8) / pointers_per_cluster;
-            int ind_offset = (current_cluster - 8) - ind_count * pointers_per_cluster;
-            image_file.seekg(ind_cluster_loc + ind_offset * 4, std::ios::beg);
-            image_file.seekp(image_file.tellg(), std::ios::beg);
-            image_file.write((char *)&root_dir_new_cluster, 4);
         }
     }
     else
     {
-        int entries_per_cluster = (boot_record.bytes_per_sector * boot_record.sectors_per_cluster) / sizeof(RootEntry);
-        if (root_dir_clusters < 8)
+        int current_cluster = 0;
+        int cluster;
+        bool allocated = false;
+        int current_indirect_cluster = new_root_dir.undirect_cluster_ptr;
+        while (current_cluster < root_dir_clusters && !allocated)
         {
-            printf("The direct non expand\n");
-            bool allocated = false;
-            for (int i = 0; i < 8 && !allocated; i++)
+            if (current_cluster < 8)
             {
-                int cluster = new_root_dir.cluster_ptrs[i];
-                RootEntry current_entry;
-                image_file.seekg(boot_record.pos_data * boot_record.bytes_per_sector + (cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster, std::ios::beg);
-                for (int j = 0; j < entries_per_cluster && !allocated; j++)
+                for (; current_cluster < 8 && current_cluster < root_dir_clusters && !allocated; current_cluster++)
                 {
-                    image_file.read((char *)&current_entry, sizeof(RootEntry));
-                    if (current_entry.type == 0x00)
+                    printf("Current cluster: %i\n", current_cluster);
+                    printf("New root first pointer: %i\n ", new_root_dir.cluster_ptrs[0]);
+                    cluster = new_root_dir.cluster_ptrs[current_cluster];
+                    int cluster_loc = boot_record.pos_data * boot_record.bytes_per_sector + (cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
+                    image_file.seekg(cluster_loc, std::ios::beg);
+                    RootEntry current_entry;
+                    printf("Root loop\n");
+                    for (int j = 0; j < entries_per_cluster && !allocated; j++)
                     {
-                        int entry_loc = (int)image_file.tellg() - sizeof(RootEntry);
-                        image_file.seekp(entry_loc, std::ios::beg);
-                        image_file.write(reinterpret_cast<char *>(&root_entry), sizeof(RootEntry));
-                        allocated = true;
+                        image_file.read((char *)&current_entry, sizeof(RootEntry));
+                        if (current_entry.type == 0x00)
+                        {
+                            allocated = true;
+                            image_file.seekp((int)image_file.tellg() - sizeof(RootEntry), std::ios::beg);
+                            printf("Escrevendo entrada em %i cluster %i\n", image_file.tellp(), cluster);
+                            image_file.write((char *)&root_entry, sizeof(RootEntry));
+                        }
                     }
                 }
             }
-        }
-        else
-        {
-            printf("The undirect non expand\n");
-            int current_cluster = 0;
-            int cluster;
-            bool allocated = false;
-            int current_indirect_cluster = new_root_dir.undirect_cluster_ptr;
-            while (current_cluster < root_dir_clusters && !allocated)
+            else
             {
-                if (current_cluster < 8)
+                int ind_cluster_loc = boot_record.pos_data * boot_record.bytes_per_sector + (current_indirect_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
+                image_file.seekg(ind_cluster_loc, std::ios::beg);
+                for (; current_cluster < pointers_per_cluster && current_cluster < root_dir_clusters && !allocated; current_cluster++)
                 {
-                    for (int i = 0; i < 8 && current_cluster < root_dir_clusters && !allocated; i++)
+                    image_file.read((char *)&cluster, 4);
+                    image_file.seekg(data_position + (cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster, std::ios::beg);
+                    RootEntry current_entry;
+                    for (int j = 0; j < entries_per_cluster && !allocated; j++)
                     {
-                        current_cluster = i;
-                        cluster = new_root_dir.cluster_ptrs[i];
-                        int cluster_loc = boot_record.pos_data * boot_record.bytes_per_sector + (cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
-                        image_file.seekg(cluster_loc, std::ios::beg);
-                        RootEntry current_entry;
-                        for (int j = 0; j < entries_per_cluster && !allocated; j++)
+                        image_file.read((char *)&current_entry, sizeof(RootEntry));
+                        if (current_entry.type == 0x00)
                         {
-                            image_file.read((char *)&current_entry, sizeof(RootEntry));
-                            if (current_entry.type == 0x00)
-                            {
-                                printf("Wrote at cluster: %i Entry: %i\n", cluster, j);
-                                allocated = true;
-                                image_file.seekp((int)image_file.tellg() - sizeof(RootEntry), std::ios::beg);
-                                image_file.write((char *)&root_entry, sizeof(RootEntry));
-                            }
+                            allocated = true;
+                            image_file.seekp((int)image_file.tellg() - sizeof(RootEntry), std::ios::beg);
+                            image_file.write((char *)&root_entry, sizeof(RootEntry));
                         }
                     }
                 }
-                else
-                {
-                    int ind_cluster_loc = boot_record.pos_data * boot_record.bytes_per_sector + (current_indirect_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster;
-                    image_file.seekg(ind_cluster_loc, std::ios::beg);
-                    for (int i = 0; i < pointers_per_cluster && current_cluster < root_dir_clusters && !allocated; i++)
-                    {
-                        current_cluster++;
-                        image_file.read((char *)&cluster, 4);
-                        image_file.seekg(data_position + (cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster, std::ios::beg);
-                        RootEntry current_entry;
-                        for (int j = 0; j < entries_per_cluster && !allocated; j++)
-                        {
-                            image_file.read((char *)&current_entry, sizeof(RootEntry));
-                            if (current_entry.type == 0x00)
-                            {
-                                printf("Wrote at cluster: %i Entry: %i\n", cluster, j);
-                                allocated = true;
-                                image_file.seekp((int)image_file.tellg() - sizeof(RootEntry), std::ios::beg);
-                                image_file.write((char *)&root_entry, sizeof(RootEntry));
-                            }
-                        }
-                    }
-                    image_file.read((char *)&current_indirect_cluster, 4);
-                }
+                image_file.read((char *)&current_indirect_cluster, 4);
             }
         }
     }
@@ -379,6 +372,17 @@ std::vector<unsigned int> allocate_file(std::vector<unsigned int> free_clusters)
         image_file.seekp((int)image_file.tellg() - 1, std::ios::beg);
         image_file.write(&new_byte, sizeof(new_byte));
     }
+    if (root_dir_new_indirect_cluster != 0x00)
+    {
+        int root_dir_ind_byte_loc = (root_dir_new_indirect_cluster - 1) / 8;
+        uint root_dir_ind_bit = (root_dir_new_indirect_cluster - 1) % 8;
+        image_file.seekg(bitmap_position + root_dir_ind_byte_loc, std::ios::beg);
+        char read_byte;
+        image_file.read(&read_byte, sizeof(read_byte));
+        char new_byte = read_byte | (128 >> (uint)root_dir_ind_bit);
+        image_file.seekp((int)image_file.tellg() - 1, std::ios::beg);
+        image_file.write(&new_byte, sizeof(new_byte));
+    }
     // Alocar Ponteiros Diretos
     for (int i = 0; i < 8 && i < free_clusters.size(); i++)
     {
@@ -417,12 +421,6 @@ std::vector<unsigned int> allocate_file(std::vector<unsigned int> free_clusters)
 
 void copy_data(std::vector<unsigned int> data_clusters)
 {
-    printf("Data clusters used: [");
-    for (int data_cluster : data_clusters)
-    {
-        printf("%i, ", data_cluster);
-    }
-    printf("]\n");
     target_file.seekg(0, std::ios::end);
     int file_size = target_file.tellg();
     target_file.seekg(0, std::ios::beg);
@@ -475,6 +473,10 @@ int main(int argc, char *argv[])
     image_file.read((char *)(&root_dir_inode), sizeof(Inode));
     // Verificar Disponibilidade de Clusters e Guardar Disponíveis
     std::vector<unsigned int> free_clusters = find_clusters(clusters_needed);
+    printf("Alocando os seguintes clusters: [");
+    for (int i = 0; i < free_clusters.size(); i++)
+        printf("%i, ", free_clusters[i]);
+    printf("]\n");
     // Procurar e Alocar Inode Disponível e Transferir Dados
     std::vector<unsigned int> data_clusters = allocate_file(free_clusters);
     // Escrever os dados
@@ -482,5 +484,6 @@ int main(int argc, char *argv[])
     // Fechar Arquivo e Imagem
     target_file.close();
     image_file.close();
+    printf("Arquivo alocado.\n");
     return 0;
 }

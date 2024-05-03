@@ -30,7 +30,7 @@ typedef struct Inode
     unsigned long int modification_time;
     unsigned long int creation_time;
     unsigned int cluster_ptrs[8];
-    unsigned int undirect_cluster_ptr;
+    unsigned int indirect_cluster_ptr;
 } __attribute__((packed)) Inode;
 
 typedef struct RootEntry
@@ -196,25 +196,53 @@ RootEntry create_root_entry(int allocated_inode)
     root_entry.type = 0x10;
     root_entry.inode_id = allocated_inode;
     int name_loc;
+
     for (int i = 0; i < 20; i++)
         root_entry.name[i] = 0x00;
+
     for (int i = 0; i < 3; i++)
         root_entry.extension[i] = 0x00;
-    for (int i = target_file_path.length() - 1; i >= -1; i--)
+
+    std::string file_name;
+    for (int i = 0; i < target_file_path.size(); i++)
     {
-        if (i == -1 || target_file_path[i] == '/')
-            name_loc = i;
-    }
-    for (int j = name_loc + 1; j < target_file_path.length() && target_file_path[j] != '.'; j++)
-        root_entry.name[j - (name_loc)-1] = target_file_path[j];
-    for (int j = name_loc + 1; j < target_file_path.length(); j++)
-    {
-        if (target_file_path[j] == '.')
+        if (target_file_path[i] == '/')
         {
-            for (int k = j + 1; k < target_file_path.length(); k++)
-                root_entry.extension[k - j - 1] = target_file_path[k];
+            file_name = target_file_path.substr(i + 1);
+            break;
         }
     }
+    if (file_name.size() == 0)
+        file_name = target_file_path;
+
+    std::cout << "SAVING FILE WITH NAME " << file_name << std::endl;
+
+    for (int i = file_name.length() - 1; i >= -1; i--)
+    {
+        if (i == -1 || file_name[i] == '/')
+            name_loc = i;
+    }
+    for (int j = name_loc + 1; j < file_name.length() && file_name[j] != '.' && j <= 20; j++)
+        root_entry.name[j - (name_loc)-1] = file_name[j];
+
+    if (root_entry.name[0] == 0x00)
+    {
+        for (int j = name_loc + 1; j < file_name.length() && j <= 20; j++)
+            root_entry.name[j - (name_loc)-1] = file_name[j];
+    }
+    else
+        for (int j = name_loc + 1; j < file_name.length(); j++)
+        {
+            if (file_name[j] == '.')
+            {
+                j++;
+                for (int k = 0; k < 3 && j < file_name.length(); j++, k++)
+                {
+                    root_entry.extension[k] = file_name[j];
+                }
+                
+            }
+        }
     return root_entry;
 }
 
@@ -238,13 +266,13 @@ void allocate_root_entry(int allocated_inode)
         }
         else if (root_dir_clusters == 9)
         {
-            new_root_dir.undirect_cluster_ptr = root_dir_new_indirect_cluster;
+            new_root_dir.indirect_cluster_ptr = root_dir_new_indirect_cluster;
             image_file.seekp(data_position + (root_dir_new_indirect_cluster - 1) * boot_record.bytes_per_sector * boot_record.sectors_per_cluster, std::ios::beg);
             image_file.write((char *)&root_dir_new_cluster, 4);
         }
         else
         {
-            int current_indirect_cluster = new_root_dir.undirect_cluster_ptr;
+            int current_indirect_cluster = new_root_dir.indirect_cluster_ptr;
             int current_cluster = 7;
             bool allocated = false;
             while (!allocated)
@@ -272,7 +300,7 @@ void allocate_root_entry(int allocated_inode)
         int current_cluster = 0;
         int cluster;
         bool allocated = false;
-        int current_indirect_cluster = new_root_dir.undirect_cluster_ptr;
+        int current_indirect_cluster = new_root_dir.indirect_cluster_ptr;
         while (current_cluster < root_dir_clusters && !allocated)
         {
             if (current_cluster < 8)
@@ -315,6 +343,7 @@ void allocate_root_entry(int allocated_inode)
                         {
                             allocated = true;
                             image_file.seekp((int)image_file.tellg() - sizeof(RootEntry), std::ios::beg);
+                            printf("Escrevendo entrada em %i\n", image_file.tellp());
                             image_file.write((char *)&root_entry, sizeof(RootEntry));
                         }
                     }
@@ -392,7 +421,7 @@ std::vector<unsigned int> allocate_file(std::vector<unsigned int> free_clusters)
     // Alocar Ponteiros Indiretos
     if (free_clusters.size() > 8)
     {
-        inode.undirect_cluster_ptr = free_clusters[8];
+        inode.indirect_cluster_ptr = free_clusters[8];
         int clusters_allocated = 8;
         int data_pos = boot_record.pos_data * boot_record.bytes_per_sector;
         while (clusters_allocated < free_clusters.size())
@@ -402,14 +431,14 @@ std::vector<unsigned int> allocate_file(std::vector<unsigned int> free_clusters)
             clusters_allocated++;
             for (int i = 0; i < pointers_per_cluster && clusters_allocated < free_clusters.size(); i++)
             {
-                image_file.write(reinterpret_cast<const char *>(&free_clusters[clusters_allocated]), sizeof(unsigned short));
+                image_file.write(reinterpret_cast<const char *>(&free_clusters[clusters_allocated]), sizeof(int));
                 data_clusters.push_back(free_clusters[clusters_allocated]);
                 clusters_allocated++;
             }
             if (clusters_allocated < free_clusters.size())
             {
                 clusters_allocated++;
-                image_file.write(reinterpret_cast<const char *>(&free_clusters[clusters_allocated]), sizeof(unsigned short));
+                image_file.write(reinterpret_cast<const char *>(&free_clusters[clusters_allocated]), sizeof(int));
             }
         }
     }

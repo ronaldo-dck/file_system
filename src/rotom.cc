@@ -6,6 +6,7 @@
 #include "rfstruct.hh"
 #include "reader.hh"
 #include "writer.hh"
+#include "remover.hh"
 
 // Variáveis Globais
 
@@ -143,6 +144,15 @@ void read_file()
         std::cout << "Falha ao ler um arquivo" << '\n';
 }
 
+void delete_file()
+{
+    std::string file_name;
+    std::cout << "Insira o nome do arquivo a ser excluído. Aviso! Esta operação consiste de desalocações, e potencialmente não remove os traços (sobrescreve) os seus dados" << '\n';
+    std::getline(std::cin, file_name);
+    if (!erase_image_file(image_stream, file_name))
+        std::cout << "Falha ao excluir um arquivo" << '\n';
+}
+
 // Função Principal
 
 int main(int argc, char *argv[])
@@ -164,6 +174,8 @@ int main(int argc, char *argv[])
                 external_file_move();
             else if (input == "read")
                 read_file();
+            else if (input == "delete")
+                delete_file();
             else if (input == "list")
                 list_entries(image_stream);
             else if (input == "info")

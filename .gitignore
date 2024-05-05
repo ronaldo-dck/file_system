@@ -2,5 +2,5 @@
 *.img
 assets/
 assets/*
-test/
-test/*
+test-folder/
+test-folder/*

@@ -72,7 +72,7 @@ void show_info()
     std::cout << "Setores reservados: " << (int)boot_record.reserved_sectors << '\n';
     std::cout << "Quantidade total de setores: " << boot_record.total_sectors << '\n';
     std::cout << "Bytes por setor: " << (int)boot_record.bytes_per_sector << '\n';
-    std::cout << "Setores por clusters: " << boot_record.sectors_per_cluster << '\n';
+    std::cout << "Setores por clusters: " << (int)boot_record.sectors_per_cluster << '\n';
     std::cout << "Tamanho do bitmap em setores: " << boot_record.bitmap_size << '\n';
     std::cout << "Quantidade máxima de Inode: " << boot_record.inodes << '\n';
     std::cout << "Tamanho do Inode: " << boot_record.len_inode << '\n';
@@ -91,33 +91,10 @@ void internal_file_move()
         std::cout << "Caminho do arquivo não encontrado ou não existe.\n";
     else
     {
-        int repeat_times;
-        std::string repeat_input;
-        std::cout << "Repetir quantas vezes?" << '\n';
-        std::getline(std::cin, repeat_input);
-        repeat_times = std::strtol(repeat_input.c_str(), nullptr, 10);
-        if (repeat_times < 2)
-        {
-            repeat_times = 1;
-            if (copy_file_to_image(image_stream, moving_file_name, moving_file_stream))
-                std::cout << "Arquivo copiado com sucesso" << '\n';
-            else
-                std::cout << "Cópia de arquivo falhou" << '\n';
-        }
+        if (copy_file_to_image(image_stream, moving_file_name, moving_file_stream))
+            std::cout << "Arquivo copiado com sucesso" << '\n';
         else
-        {
-            for (int i = 0; i < repeat_times; i++)
-            {
-                if (!copy_file_to_image(image_stream, moving_file_name, moving_file_stream))
-                {
-                    std::cout << "Cópia de arquivo x" << i << " falhou" << '\n';
-                    std::cout << "Cópias subsequentes foram interrompidas" << '\n';
-                    break;
-                }
-                else
-                    std::cout << "Arquivo copiado com sucesso " << 'x' << i + 1 << '\n';
-            }
-        }
+            std::cout << "Cópia de arquivo falhou" << '\n';
     }
     moving_file_stream.close();
 }
